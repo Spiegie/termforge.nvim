@@ -23,6 +23,23 @@
           default = self.packages.${system}.termforge-nvim;
         });
 
+      apps = forAllSystems (system:
+        let pkgs = pkgsFor system; in
+        {
+          # Test drive: `nix run .#` opens an isolated Neovim with only
+          # termforge loaded (no user config, no other plugins).
+          default = {
+            type = "app";
+            program = "${pkgs.writeShellScript "termforge-nvim" ''
+              exec ${pkgs.lib.getExe pkgs.neovim} --noplugin \
+                -u ${pkgs.writeText "termforge-init.lua" ''
+                  vim.opt.rtp:prepend("${self.packages.${system}.termforge-nvim}")
+                  require("termforge").setup({})
+                ''} "$@"
+            ''}";
+          };
+        });
+
       devShells = forAllSystems (system:
         let pkgs = pkgsFor system; in
         {

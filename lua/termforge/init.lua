@@ -8,8 +8,9 @@
 -- Setup:
 --   require("termforge").setup({
 --     keymaps = {
---       launch = "<leader>j",   -- Befehl ins aktuelle Terminal feuern
---       buffers = "<leader>tb", -- Terminal-Buffer auswaehlen
+--       launch = "<leader>j",      -- Befehl ins aktuelle Terminal feuern
+--       buffers = "<leader>tb",   -- Terminal-Buffer auswaehlen
+--       terminal_esc = "<Esc>",   -- Terminal-Modus mit Esc verlassen
 --     },
 --   })
 
@@ -19,6 +20,9 @@ M.config = {
   keymaps = {
     launch = "<leader>j",
     buffers = "<leader>tb",
+    -- Esc verlaesst den Terminal-Modus wie den Insert-Modus; false = aus.
+    -- Achtung: Esc erreicht dann nie mehr das Programm im Terminal.
+    terminal_esc = "<Esc>",
   },
   -- Befehle fuer termforge.launch
   commands = {
@@ -43,6 +47,31 @@ M.setup = function(opts)
     vim.keymap.set("t", km.buffers, buffers.select, { desc = "termforge: Terminal-Buffer" })
     vim.keymap.set("n", km.buffers, buffers.select, { desc = "termforge: Terminal-Buffer" })
   end
+  if km.terminal_esc then
+    vim.keymap.set("t", km.terminal_esc, [[<C-\><C-n>]], { desc = "termforge: Terminal-Modus verlassen" })
+  end
+end
+
+--- CWD des Terminal-Prozesses ermitteln.
+--- Neovim bietet dafuer keine Funktion: unter Linux zeigt /proc/<pid>/cwd
+--- das Live-Verzeichnis des Shells (folgt cd); sonst bleibt das
+--- Anlege-Verzeichnis aus dem term://-Buffernamen.
+---@param bufnr number
+---@param job_id number
+---@return string? cwd
+M.terminal_cwd = function(bufnr, job_id)
+  local ok_pid, pid = pcall(vim.fn.jobpid, job_id)
+  if ok_pid and type(pid) == "number" and pid > 0 then
+    local ok, cwd = pcall(vim.fn.resolve, ("/proc/%d/cwd"):format(pid))
+    if ok and cwd ~= "" and not cwd:match("^/proc/%d+/cwd$") then
+      return cwd
+    end
+  end
+  local dir = vim.api.nvim_buf_get_name(bufnr):match("^term://(.-)//")
+  if dir and dir ~= "" then
+    return (dir:sub(1, 1) == "~") and vim.fn.expand(dir) or dir
+  end
+  return nil
 end
 
 --- Terminal-Kontext des aktuellen Buffers ermitteln.
@@ -56,11 +85,19 @@ M.terminal_context = function()
   if not job_id then
     return nil, nil, nil
   end
-  local ok, cwd = pcall(vim.fn.term_getcwd, bufnr)
-  if not ok or cwd == "" then
-    cwd = nil
-  end
-  return bufnr, job_id, cwd
+  return bufnr, job_id, M.terminal_cwd(bufnr, job_id)
+end
+
+--- Nach einer Picker-/Input-Interaktion in den Terminal-Modus des Buffers
+--- zurueckkehren, sofern der Fokus noch dort liegt. Ohne diesen Schritt
+--- landet man nach Abbruch im Normal-Modus des nomodifiable Terminals.
+---@param bufnr number
+M.enter_terminal_mode = function(bufnr)
+  vim.defer_fn(function()
+    if vim.api.nvim_buf_is_valid(bufnr) and vim.api.nvim_get_current_buf() == bufnr then
+      vim.cmd("startinsert")
+    end
+  end, 10)
 end
 
 --- Befehl an einen Terminal-Job senden und Fokus zurueckholen.
@@ -74,11 +111,7 @@ M.send = function(bufnr, job_id, cmd)
     vim.api.nvim_set_current_win(win)
   end
   vim.fn.chansend(job_id, cmd .. "\r")
-  vim.defer_fn(function()
-    if vim.api.nvim_get_current_buf() == bufnr then
-      vim.cmd("startinsert")
-    end
-  end, 10)
+  M.enter_terminal_mode(bufnr)
 end
 
 --- Alle Terminal-Buffer sammeln.
@@ -88,11 +121,10 @@ M.terminals = function()
   for _, bufnr in ipairs(vim.api.nvim_list_bufs()) do
     local job_id = vim.b[bufnr].terminal_job_id
     if job_id then
-      local ok, cwd = pcall(vim.fn.term_getcwd, bufnr)
       out[#out + 1] = {
         bufnr = bufnr,
         job_id = job_id,
-        cwd = (ok and cwd ~= "") and cwd or nil,
+        cwd = M.terminal_cwd(bufnr, job_id),
         title = vim.api.nvim_buf_get_name(bufnr),
       }
     end

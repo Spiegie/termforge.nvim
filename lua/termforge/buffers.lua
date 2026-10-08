@@ -16,6 +16,7 @@ M.select = function()
   end
 
   local current = vim.api.nvim_get_current_buf()
+  local restore = vim.api.nvim_get_mode().mode == "t"
 
   pickers.select(terminals, {
     prompt = "terminals",
@@ -33,6 +34,9 @@ M.select = function()
     end,
   }, function(choice)
     if not choice then
+      if restore then
+        core.enter_terminal_mode(current)
+      end
       return
     end
     local win = vim.fn.bufwinid(choice.bufnr)
@@ -42,7 +46,7 @@ M.select = function()
       vim.api.nvim_set_current_buf(choice.bufnr)
     end
     if vim.api.nvim_get_current_buf() == choice.bufnr then
-      vim.cmd("startinsert")
+      core.enter_terminal_mode(choice.bufnr)
     end
   end)
 end

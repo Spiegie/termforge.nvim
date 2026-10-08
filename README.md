@@ -14,7 +14,10 @@ pick a command, edit it, fire it.
 | `termforge.launch` | Command launcher: pick → edit → send into the current terminal | `<leader>j` |
 | `termforge.buffers` | Picker listing only terminal buffers | `<leader>tb` |
 
-Both keymaps work in Normal mode and Terminal mode.
+Both keymaps work in Normal mode and Terminal mode. Additionally, `<Esc>`
+leaves Terminal mode back to Normal mode (like leaving Insert mode); set
+`keymaps.terminal_esc = false` if you want Esc to reach the program in the
+terminal instead.
 
 ## Installation
 
@@ -42,6 +45,9 @@ Both keymaps work in Normal mode and Terminal mode.
    confirm.
 4. The command is sent to the terminal and Terminal mode is restored.
 
+Canceling the picker or the prompt also returns you to Terminal mode, so you
+never get stuck in Normal mode inside the (non-modifiable) terminal buffer.
+
 ### Defining commands
 
 Two sources, project-local wins on name collision:
@@ -57,7 +63,10 @@ return {
 }
 ```
 
-The CWD is taken from the terminal process (`term_getcwd()`), not from Neovim.
+The CWD is read live from the terminal process (`/proc/<pid>/cwd` via
+`jobpid()`), not from Neovim — it follows `cd` in your shell. On systems
+without `/proc`, the directory the terminal was opened in (from the `term://`
+buffer name) is used as fallback.
 
 ## Configuration
 
@@ -66,6 +75,7 @@ require("termforge").setup({
   keymaps = {
     launch = "<leader>j",   -- set to false to disable
     buffers = "<leader>tb",
+    terminal_esc = "<Esc>", -- Esc exits Terminal mode; false to disable
   },
   commands = {
     local_commands_file = ".nvim/commands.lua",
@@ -82,6 +92,12 @@ Install one of the first two for fuzzy matching; `vim.ui.select` is the
 dependency-free fallback.
 
 ## Nix
+
+Test drive in an isolated Neovim (no user config, only termforge loaded):
+
+```sh
+nix run .
+```
 
 Dev shell:
 

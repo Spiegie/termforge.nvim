@@ -60,13 +60,20 @@ M._collect = function(cwd)
 end
 
 --- Befehl (ggf. editiert) absenden.
-M._run = function(bufnr, job_id, cmd)
+---@param bufnr number
+---@param job_id number
+---@param cmd string
+---@param restore boolean true, wenn aus dem Terminal-Modus gestartet wurde
+M._run = function(bufnr, job_id, cmd, restore)
   if not core.config.commands.edit_before_run then
     core.send(bufnr, job_id, cmd)
     return
   end
   vim.ui.input({ prompt = "termforge > ", default = cmd }, function(edited)
     if not edited then
+      if restore then
+        core.enter_terminal_mode(bufnr)
+      end
       return -- abgebrochen
     end
     core.send(bufnr, job_id, edited == "" and cmd or edited)
@@ -87,6 +94,11 @@ M.launch = function()
     return
   end
 
+  -- War man vor dem Picker im Terminal-Modus, wird dieser nach jedem
+  -- Abbruch wiederhergestellt (der Terminal-Buffer ist nomodifiable,
+  -- Tasten waeren sonst im Normal-Modus verloren).
+  local restore = vim.api.nvim_get_mode().mode == "t"
+
   pickers.select(commands, {
     prompt = "termforge",
     format = function(c)
@@ -96,9 +108,13 @@ M.launch = function()
       return c.name .. " " .. c.cmd
     end,
   }, function(choice)
-    if choice then
-      M._run(bufnr, job_id, choice.cmd)
+    if not choice then
+      if restore then
+        core.enter_terminal_mode(bufnr)
+      end
+      return
     end
+    M._run(bufnr, job_id, choice.cmd, restore)
   end)
 end
 
