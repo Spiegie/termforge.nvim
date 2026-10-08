@@ -1,9 +1,9 @@
 -- termforge.nvim — small extensions for Neovim's built-in terminal.
 --
 -- Module layout:
---   termforge        = Kern: Setup, Terminal-Kontext, Picker-Dispatch, chansend
---   termforge.just   = Command-Launcher (just-artig): Picker -> Edit -> Send
---   termforge.buffers= Terminal-Buffer-Selector
+--   termforge         = Kern: Setup, Terminal-Kontext, Picker-Dispatch, chansend
+--   termforge.launch  = Command-Launcher: Picker -> Edit -> Send
+--   termforge.buffers = Terminal-Buffer-Selector
 --
 -- Setup:
 --   require("termforge").setup({
@@ -20,8 +20,8 @@ M.config = {
     launch = "<leader>j",
     buffers = "<leader>tb",
   },
-  -- Befehle fuer termforge.just
-  just = {
+  -- Befehle fuer termforge.launch
+  commands = {
     local_commands_file = ".nvim/commands.lua",
     global_commands_file = vim.fn.stdpath("config") .. "/termforge-commands.lua",
     edit_before_run = true, -- optionaler Edit-Schritt, default an
@@ -31,13 +31,13 @@ M.config = {
 ---@param opts table
 M.setup = function(opts)
   M.config = vim.tbl_deep_extend("force", M.config, opts or {})
-  local just = require("termforge.just")
+  local launch = require("termforge.launch")
   local buffers = require("termforge.buffers")
 
   local km = M.config.keymaps
   if km.launch then
-    vim.keymap.set("t", km.launch, just.launch, { desc = "termforge: Befehl auswaehlen" })
-    vim.keymap.set("n", km.launch, just.launch, { desc = "termforge: Befehl auswaehlen" })
+    vim.keymap.set("t", km.launch, launch.launch, { desc = "termforge: Befehl auswaehlen" })
+    vim.keymap.set("n", km.launch, launch.launch, { desc = "termforge: Befehl auswaehlen" })
   end
   if km.buffers then
     vim.keymap.set("t", km.buffers, buffers.select, { desc = "termforge: Terminal-Buffer" })

@@ -3,16 +3,16 @@
 Small extensions for Neovim's built-in terminal. Fire predefined commands into
 the terminal you are already in, and jump between your terminal buffers.
 
-Unlike task runners (just.nvim, toggletasks, overseer), termforge does not spawn
-terminals or background jobs. It serves **the terminal you navigated to**:
-navigate your shell where you want, pick a command, edit it, fire it.
+Unlike task runners, termforge does not spawn terminals or background jobs. It
+serves **the terminal you navigated to**: navigate your shell where you want,
+pick a command, edit it, fire it.
 
 ## Modules
 
 | Module | What it does | Default keymap |
 |---|---|---|
-| `termforge.just` | just-style command launcher: pick → edit → send into the current terminal | `<leader>j` |
-| `termforge.buffers` | Telescope/snacks selector listing only terminal buffers | `<leader>tb` |
+| `termforge.launch` | Command launcher: pick → edit → send into the current terminal | `<leader>j` |
+| `termforge.buffers` | Picker listing only terminal buffers | `<leader>tb` |
 
 Both keymaps work in Normal mode and Terminal mode.
 
@@ -67,7 +67,7 @@ require("termforge").setup({
     launch = "<leader>j",   -- set to false to disable
     buffers = "<leader>tb",
   },
-  just = {
+  commands = {
     local_commands_file = ".nvim/commands.lua",
     global_commands_file = vim.fn.stdpath("config") .. "/termforge-commands.lua",
     edit_before_run = true, -- skip the edit step with false
