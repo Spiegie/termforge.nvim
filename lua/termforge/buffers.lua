@@ -1,17 +1,49 @@
--- termforge.buffers — Terminal-Buffer-Selector.
+-- termforge.buffers — terminal buffer selector.
 --
--- Listet alle Terminal-Buffer (job laeuft noch), Auswahl springt hin.
--- Versteckte Buffer (kein Fenster) werden im aktuellen Fenster geoeffnet.
+-- Lists all terminal buffers (job still running); picking one jumps to it.
+-- Hidden buffers (no window) are opened in the current window.
 
 local M = {}
 
 local core = require("termforge")
 local pickers = require("termforge.pickers")
 
-M.select = function()
+--- Kill a terminal entry from the picker: stop its job and delete its
+--- buffer. Guarded: the entry may be gone by the time the key fires.
+---@param t table? {bufnr, job_id, ...} from core.terminals()
+M._kill = function(t)
+  if not t then
+    return
+  end
+  pcall(vim.fn.jobstop, t.job_id)
+  pcall(vim.api.nvim_buf_delete, t.bufnr, { force = true })
+end
+
+--- Rename a terminal entry from the picker: prompt for a label and
+--- apply it (see core.label). An empty input clears the label,
+--- canceling changes nothing. Guarded: the entry may be gone by the
+--- time the key fires.
+---@param t table? {bufnr, job_id, ...} from core.terminals()
+M._rename = function(t)
+  if not t or not vim.api.nvim_buf_is_valid(t.bufnr) then
+    return
+  end
+  local current = vim.b[t.bufnr].termforge_label or ""
+  vim.ui.input({ prompt = "termforge label: ", default = current }, function(input)
+    if input == nil then
+      return
+    end
+    core.label(t.bufnr, input ~= "" and input or nil)
+  end)
+end
+
+--- Open the terminal picker; {on_choice} receives the picked terminal
+--- ({bufnr, job_id, cwd, title}). Not called when the picker is canceled.
+---@param on_choice function(terminal)
+M.pick = function(on_choice)
   local terminals = core.terminals()
   if #terminals == 0 then
-    vim.notify("termforge: keine Terminal-Buffer offen.", vim.log.levels.WARN)
+    vim.notify("termforge: no terminal buffers open.", vim.log.levels.WARN)
     return
   end
 
@@ -32,6 +64,35 @@ M.select = function()
     ordinal = function(t)
       return t.title .. " " .. (t.cwd or "")
     end,
+    -- Shown by pickers that support previews (Telescope, snacks): the
+    -- last lines of the terminal, so you can tell terminals apart.
+    -- Terminal buffers pad with blank lines below the content (the
+    -- buffer is as tall as its window), so trim the blank tail first
+    -- and only then keep the last lines.
+    preview = function(t)
+      if not vim.api.nvim_buf_is_valid(t.bufnr) then
+        return {}
+      end
+      local count = vim.api.nvim_buf_line_count(t.bufnr)
+      local lines = vim.api.nvim_buf_get_lines(t.bufnr, math.max(0, count - 500), -1, false)
+      while #lines > 0 and lines[#lines]:match("^%s*$") do
+        lines[#lines] = nil
+      end
+      if #lines > 15 then
+        local tail = {}
+        for i = #lines - 14, #lines do
+          tail[#tail + 1] = lines[i]
+        end
+        return tail
+      end
+      return lines
+    end,
+    -- <C-k> kills the terminal under the cursor, <C-e> renames it
+    -- (label); Telescope and snacks.
+    actions = {
+      { key = "<C-k>", fn = M._kill },
+      { key = "<C-e>", fn = M._rename },
+    },
   }, function(choice)
     if not choice then
       if restore then
@@ -39,6 +100,13 @@ M.select = function()
       end
       return
     end
+    on_choice(choice)
+  end)
+end
+
+--- Open the terminal picker and jump to the chosen terminal.
+M.select = function()
+  M.pick(function(choice)
     local win = vim.fn.bufwinid(choice.bufnr)
     if win ~= -1 then
       vim.api.nvim_set_current_win(win)

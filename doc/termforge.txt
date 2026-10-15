@@ -1,0 +1,529 @@
+*termforge.txt*	Small extensions for Neovim's built-in terminal
+
+Author: Spiegie
+License: Same as Neovim
+
+==============================================================================
+INTRODUCTION					*termforge-intro*
+
+termforge.nvim serves the terminal you are already in. Fire predefined
+commands into it, jump between your terminal buffers, and send lines from
+any buffer straight into it. Unlike task runners, termforge does not spawn
+terminals or background jobs: navigate your shell where you want, pick a
+command, edit it, fire it.
+
+Modules:
+
+|termforge-launch()|		Command launcher: pick, edit, send
+				into the current terminal
+|termforge-buffers-select()|	Picker listing only terminal buffers,
+				with a preview of each
+|termforge-send-line()|		Send the cursor line or a selection to
+				the last-used terminal
+|termforge-session-save()|	Persist terminals across :mksession,
+				restore their live CWDs after :source
+|termforge-watch-snippet()|	Notify when commands in terminal shells finish
+|termforge-label()|		Label terminal buffers for pickers and :ls
+
+==============================================================================
+USAGE						*termforge-usage*
+
+Call |termforge-setup()| from your configuration: >
+
+	require("termforge").setup({})
+
+Default keymaps, all configurable or disableable via
+|termforge-configuration|:
+
+<leader>ll	Launch a command into the current terminal
+		(Normal and Terminal mode)
+<leader>lb	Pick a terminal buffer (Normal and Terminal mode)
+<leader>ls	Send the cursor line (Normal mode, count-aware)
+		or the selection (Visual mode) to the last-used
+		terminal
+<leader>lr	Repeat the last fired command in the current
+		terminal (Normal and Terminal mode)
+<leader>lc	cd the current terminal to the directory of
+		the last visited file (Normal and Terminal
+		mode)
+<leader>lt	Focus the last-used terminal (Normal and
+		Terminal mode)
+<Esc>		Leave Terminal mode back to Normal mode
+		(Terminal mode)
+
+User commands, independent of the keymaps: `:TermforgeLaunch`,
+`:TermforgeBuffers`, `:[range]TermforgeSend` (without a range: the
+cursor line; with `!`: pick the terminal first), `:TermforgeLabel`
+(see |termforge-labels|), `:TermforgeRepeat`, `:TermforgeCd`,
+`:TermforgeCommands` and `:TermforgeLast`.
+
+The launch flow: open a terminal (`:terminal`) and `cd` where you want the
+command to run. Press `<leader>ll`, pick a command, edit it in the prompt
+if needed, confirm. The command is sent to the terminal and Terminal mode
+is restored. Canceling the picker or the prompt also returns you to
+Terminal mode, so you never get stuck in Normal mode inside the
+non-modifiable terminal buffer.
+
+Sending lines: from any buffer, `<leader>ls` sends the cursor line (with a
+count, that many lines) or the visual selection to the terminal you
+visited last. Each line is sent with Enter, so the terminal executes it
+right away; focus stays in your buffer. If no live terminal exists,
+nothing is sent and a warning is shown.
+
+Repeating and navigating: `<leader>lr` (`:TermforgeRepeat`) fires the
+last launched command again, in the terminal the cursor is in now —
+which may be a different one than back then. `<leader>lc`
+(`:TermforgeCd`) sends a `cd` to the directory of the last visited
+file, navigating the shell of the current terminal there. `<leader>lt`
+(`:TermforgeLast`) focuses the last-used terminal: its window when it
+is still open, a new split otherwise.
+
+Sending to a chosen terminal: `:[range]TermforgeSend!` opens the
+terminal picker first (labels and previews included) and sends the
+lines to the terminal you pick — instead of the last-used one.
+
+Editing commands: `<C-e>` in the launch picker opens the commands file
+for editing (Telescope and snacks.picker; with the
+|vim.ui.select()| fallback use `:TermforgeCommands`). Missing files
+and directories are created with a commented stub. When the picker
+finds no commands at all, termforge offers to open the file right
+away.
+
+Killing terminals: `<C-k>` in the terminal buffer picker (Telescope
+and snacks.picker) stops the job of the terminal under the cursor and
+deletes its buffer.
+
+Renaming terminals: `<C-e>` in the terminal buffer picker (Telescope
+and snacks.picker) prompts for a label for the terminal under the
+cursor, pre-filled with its current one; an empty input clears the
+label, canceling keeps it. See |termforge-labels|.
+
+==============================================================================
+COMMANDS					*termforge-commands*
+
+Commands for |termforge-launch()| come from two Lua files, both optional.
+Project-local commands win on name collision:
+
+- `<terminal-cwd>/.nvim/commands.lua`
+- `~/.config/nvim/termforge-commands.lua`
+
+File format: >
+
+	return {
+	  { name = "build", cmd = "cargo build --release" },
+	  { name = "test", cmd = "cargo nextest run" },
+	  { name = "test-file", cmd = "pytest {file_basename}" },
+	}
+
+`name` is optional and defaults to `cmd`; entries without `cmd` are
+ignored.
+
+Command templates: a `cmd` string can contain placeholders that
+|termforge-expand()| expands when you pick the command — the edit
+prompt then shows the expanded result: >
+
+	{file}           absolute path of the file buffer visited last
+	{file_basename}  its name without the directory
+	{file_dirname}   its directory
+	{cwd}            the terminal's live working directory
+	{root}           the project root of {cwd}: the git worktree
+	                 root, or {cwd} itself outside a git repository
+	{git_branch}     the git branch checked out in {cwd} (empty
+	                 outside a git repository or on a detached HEAD)
+	{selection}      the last visual selection in that file buffer
+	{cursor}         removed; the edit prompt opens with the cursor
+	                 at this spot
+
+Example: >
+
+	return {
+	  { name = "test-file", cmd = "pytest {file_basename}" },
+	  { name = "search", cmd = "rg -n {selection}" },
+	  { name = "checkout", cmd = "git checkout {cursor}" },
+	}
+
+A placeholder whose value is unknown (no file visited yet, no CWD)
+expands to an empty string; anything else, like `${HOME}`, is left
+untouched.
+
+{selection} is the last visual selection of the file buffer
+visited last, read from the '< / '> marks, so it survives
+leaving Visual mode and switching to the terminal. It is
+interpreted characterwise: a linewise selection covers the
+whole lines, a multi-line selection is joined with a space.
+Without a selection it expands to an empty string.
+
+{cursor} inserts nothing: it is removed and the edit prompt opens
+with the cursor at its position, so you can type an argument right
+there. It needs `commands.edit_before_run` (default `true`) and
+works with the built-in input prompt; other `vim.ui.input`
+implementations may not support cursor placement, but the
+placeholder is still removed.
+
+Editing commands: `<C-e>` in the launch picker (Telescope and
+snacks.picker) opens the commands file for editing;
+|termforge-edit-commands()| does the same from anywhere. The file
+opened is the project-local one of the current terminal; outside a
+terminal, the one at the project root of the last visited file;
+without either, the global file. Missing files and directories are
+created with a commented stub. When the picker finds no commands at
+all, termforge offers to open the file right away.
+
+The CWD is read live from the terminal process (`/proc/<pid>/cwd` via
+`jobpid()`), not from Neovim, so it follows `cd` in your shell. On systems
+without `/proc`, the directory the terminal was opened in (from the
+`term://` buffer name) is used as fallback.
+
+==============================================================================
+SESSION PERSISTENCE				*termforge-session*
+
+With `session.enabled` (default `true`), termforge composes with Neovim's
+built-in session support:
+
+- `terminal` is added to 'sessionoptions', so `:mksession` records
+  terminal buffers and `:source` recreates them.
+- On `SessionWritePost`, the live CWD of every running terminal is
+  written to a sidecar file, `<session-file>.termforge.json`, next to
+  the session file. `SessionWritePost` fires when `v:this_session`
+  already points at the saved session.
+- On `SessionLoadPost`, restored terminal buffers are matched by name
+  and sent a `cd` back to their recorded CWDs. Neovim recreates terminal
+  buffers, but in the directory the session was saved from, not where
+  the shell had navigated.
+
+Only shells whose live CWD differs from the recorded one are touched;
+entries whose directory no longer exists are skipped. Set
+`session.restore_cwd = false` to keep the buffer restore but skip the
+`cd` navigation.
+
+Session plugins such as persistence.nvim (saves the session on exit,
+restores on demand) or auto-session (auto-saves and auto-restores, with
+a session picker) use `:mksession` and `:source` under the hood, so
+termforge's sidecar hooks compose with them automatically.
+
+==============================================================================
+COMMAND NOTIFICATIONS				*termforge-watch*
+
+Neovim cannot see command boundaries inside a terminal shell, so
+notifying on finished commands needs a small shell integration: the
+shell writes a marker file after each command and termforge polls
+those files for every live terminal, turning them into |vim.notify()|
+calls. This covers every command in a termforge terminal, including
+the ones you type by hand.
+
+With `notify.enabled` (default `true`), commands that run at least
+`notify.min_duration` seconds (default `1`) notify on completion:
+"cmd finished (Ns)" at INFO level, or "cmd failed (exit N, Ns)" at
+ERROR level. With a notify plugin installed (nvim-notify, noice.nvim,
+snacks.nvim) you get a popup; otherwise the message lands in the
+message area (`:messages`).
+
+Enable it by sourcing the integration for your shell; it is a no-op
+outside Neovim terminals: >
+
+	# .zshrc
+	source <termforge>/shell/termforge.zsh
+
+	# .bashrc
+	source <termforge>/shell/termforge.bash
+
+	# config.fish
+	source <termforge>/shell/termforge.fish
+
+`<termforge>` is the plugin's installation directory;
+|termforge-watch-snippet()| prints the exact path: >
+
+	:lua print(require("termforge.watch").snippet("zsh"))
+
+On NixOS and home-manager, source the snippet from the flake's
+`termforge-shell` package so the path always matches your flake
+input (the README lists ready-to-paste variants for zsh, bash and
+fish): >
+
+	programs.zsh.interactiveShellInit = ''
+	  source ${inputs.termforge.packages.${system}.termforge-shell}/share/termforge/termforge.zsh
+	'';
+
+How it works: after each command the shell writes
+`/tmp/termforge-cmd-<shell-pid>` containing "<exit> <duration>
+<command>" (duration in whole seconds). termforge polls these files
+every 250 ms, notifies, and deletes the marker.
+
+Limits:
+
+- Notifications fire for terminals Neovim owns (`:terminal`), not
+  for external terminal emulators.
+- zsh uses `preexec`/`precmd`, fish its `fish_preexec`/`fish_postexec`
+  events. bash uses a DEBUG trap; if bash-preexec is loaded, termforge
+  hooks into it instead.
+- Durations are whole seconds; commands shorter than
+  `notify.min_duration` stay silent.
+- If a terminal dies before its marker is read, the file stays in
+  `/tmp` until the OS cleans it up.
+
+==============================================================================
+TERMINAL LABELS					*termforge-labels*
+
+|termforge-label()| renames a terminal buffer to "term://<label>", so
+the label shows up everywhere buffer names are shown: `:ls`, the
+Telescope and snacks buffer pickers, bufferline plugins. No picker is
+involved; the buffer name itself carries the label. The original name
+is kept in `b:termforge_original_name`; clearing the label restores it.
+
+From a terminal buffer: >
+
+	:TermforgeLabel build	" label the current terminal
+	:TermforgeLabel		" clear the label
+
+From the terminal buffer picker, `<C-e>` renames the terminal under
+the cursor (Telescope and snacks.picker), the current label
+pre-filled; an empty input clears it.
+
+Labels compose with session persistence: after `:mksession`, termforge
+rewrites the label names out of the session file (Neovim would
+otherwise try to run the label as the terminal command when
+restoring), records the label in the sidecar file, and re-applies it
+after `:source`. With `session.enabled = false`, clear labels before
+saving a session.
+
+==============================================================================
+FUNCTIONS					*termforge-functions*
+
+setup({opts})					*termforge-setup()*
+	Initialize the plugin: register keymaps and the send-target
+	autocmds. {opts} is an optional table, see
+	|termforge-configuration|.
+
+termforge.send({bufnr}, {job_id}, {cmd})	*termforge-send()*
+	Send {cmd} followed by Enter to the terminal job {job_id},
+	focus its window and re-enter Terminal mode.
+
+termforge.terminals()				*termforge-terminals()*
+	All terminal buffers with a running job, as a list of
+	{ bufnr, job_id, cwd, title }.
+
+termforge.terminal_context()			*termforge-terminal-context()*
+	The current buffer's terminal. Returns bufnr, job_id and cwd,
+	or nil if the cursor is not in a terminal.
+
+launch.launch()					*termforge-launch()*
+	Open the command picker and fire the picked command into the
+	current terminal.
+
+launch.expand({cmd}, {cwd})			*termforge-expand()*
+	Expand the {file}, {file_basename}, {file_dirname},
+	{cwd}, {root} and {selection} placeholders in {cmd};
+	see |termforge-commands|. {cwd} is the terminal's live
+	working directory. Returns the expanded command and
+	the cursor position of the first {cursor} placeholder,
+	if any.
+
+launch.repeat_last()				*termforge-repeat-last()*
+	Fire the last command launched through
+	|termforge-launch()| again, in the terminal the
+	cursor is in now. Warns when nothing was fired yet
+	or the cursor is not in a terminal.
+
+launch.cd()					*termforge-cd()*
+	Send `cd <directory of the last visited file>` to
+	the current terminal; see |termforge-last-file()|.
+
+launch.last_file()				*termforge-last-file()*
+	The path of the file buffer visited last, or nil.
+
+launch.edit_commands()				*termforge-edit-commands()*
+	Open the commands file for editing: the
+	project-local file of the current terminal; outside
+	a terminal, the one at the project root of the last
+	visited file; without either, the global file.
+	Missing files and directories are created with a
+	commented stub.
+
+buffers.select()				*termforge-buffers-select()*
+	Open the terminal buffer picker and jump to the chosen
+	terminal. With Telescope or snacks, a preview shows each
+	terminal's last lines.
+
+buffers.pick({on_choice})			*termforge-buffers-pick()*
+	Open the terminal picker and pass the picked
+	terminal ({bufnr}, {job_id}, {cwd}, {title})
+	to {on_choice}; not called when the picker is
+	canceled. With Telescope or snacks, `<C-k>`
+	kills the terminal under the cursor and
+	`<C-e>` renames it (label).
+
+send.range({bufnr}, {start}, {finish})		*termforge-send-range()*
+	Send lines {start} to {finish} (1-based, inclusive) of {bufnr}
+	to the last-used terminal.
+
+send.line({count})				*termforge-send-line()*
+	Send {count} lines starting at the cursor (default 1, or the
+	count given to the keymap).
+
+send.selection()				*termforge-send-selection()*
+	Send the lines of the last visual selection.
+
+send.target()					*termforge-send-target()*
+	The last-used terminal with a running job, as
+	{ bufnr, job_id }, or nil.
+
+send.chosen({start}, {finish})			*termforge-send-chosen()*
+	Send lines {start} to {finish} (default:
+	the cursor line) of the current buffer to
+	a terminal chosen in the terminal picker;
+	see |termforge-buffers-pick()|.
+
+send.last()					*termforge-send-last()*
+	Focus the last-used terminal: its window
+	when it is displayed, otherwise a new
+	split. Warns when no live terminal was
+	used yet.
+
+send.lines_to({t}, {lines})			*termforge-send-lines-to()*
+	Send {lines} to the terminal {t}
+	({bufnr}, {job_id}), one line per Enter.
+	Focus stays in the source buffer.
+
+session.save({session_file})			*termforge-session-save()*
+	Write the live CWDs of all running terminals to the
+	sidecar file next to {session_file}. Without
+	{session_file}, `v:this_session` is used. Runs
+	automatically on SessionWritePost.
+
+session.restore({session_file})		*termforge-session-restore()*
+	Send a `cd` to every restored terminal whose recorded
+	CWD differs from its live CWD. Without {session_file},
+	`v:this_session` is used. Runs automatically on
+	SessionLoadPost.
+
+watch.snippet({shell})				*termforge-watch-snippet()*
+	The absolute path of the shell integration snippet for
+	{shell} ("zsh", "bash" or "fish"), for sourcing from the
+	shell rc.
+
+watch.marker({pid})				*termforge-watch-marker()*
+	The marker file the shell integration writes after each
+	command for the shell process {pid}.
+
+termforge.label({bufnr}, {label})		*termforge-label()*
+	Rename the terminal buffer {bufnr} (default: current buffer)
+	to "term://{label}", so every buffer listing shows the
+	label. {label} of nil (or "") clears it and restores the
+	original name. Returns false when {bufnr} is not a
+	terminal or the name is already taken.
+
+==============================================================================
+CONFIGURATION					*termforge-configuration*
+
+>
+
+	require("termforge").setup({
+	  keymaps = {
+	    launch = "<leader>ll",
+	    buffers = "<leader>lb",
+	    send = "<leader>ls",
+	    repeat_last = "<leader>lr",
+	    cd = "<leader>lc",
+	    last = "<leader>lt",
+	    terminal_esc = "<Esc>",
+	  },
+	  commands = {
+	    local_commands_file = ".nvim/commands.lua",
+	    global_commands_file = vim.fn.stdpath("config")
+	      .. "/termforge-commands.lua",
+	    edit_before_run = true,
+	  },
+	  session = {
+	    enabled = true,
+	    restore_cwd = true,
+	  },
+	  notify = {
+	    enabled = true,
+	    min_duration = 1,
+	  },
+	})
+
+keymaps.launch		Keymap for the command launcher (Normal and
+			Terminal mode). Default: `<leader>ll`. Set to
+			`false` to disable.
+keymaps.buffers		Keymap for the terminal buffer picker (Normal
+			and Terminal mode). Default: `<leader>lb`.
+keymaps.send		Keymap for sending lines (Normal mode: cursor
+			line; Visual mode: selection). Default:
+			`<leader>ls`.
+keymaps.repeat_last	Keymap for repeating the last fired
+			command (Normal and Terminal mode).
+			Default: `<leader>lr`.
+keymaps.cd		Keymap for sending a `cd` to the directory
+			of the last visited file (Normal and
+			Terminal mode). Default: `<leader>lc`.
+keymaps.last		Keymap for focusing the last-used terminal
+			(Normal and Terminal mode). Default:
+			`<leader>lt`.
+keymaps.terminal_esc	Keymap that leaves Terminal mode. Default:
+			`<Esc>`. Set to `false` to let Esc reach the
+			program in the terminal.
+commands.local_commands_file
+			Project-local command file, relative to the
+			terminal CWD. Default: `.nvim/commands.lua`.
+commands.global_commands_file
+			Global command file. Default:
+			`stdpath("config") .. "/termforge-commands.lua"`.
+commands.edit_before_run
+			Open an edit prompt before sending a picked
+			command. Default: `true`.
+session.enabled		Enable terminal session persistence: add
+			`terminal` to 'sessionoptions' and register
+			the sidecar autocmds. Default: `true`.
+session.restore_cwd	Send restored shells a `cd` back to their
+			recorded CWD. Default: `true`.
+notify.enabled		Notify when commands in terminal shells
+			finish. Default: `true`.
+notify.min_duration	Minimum command duration in seconds for
+			a notification to fire. Default: `1`.
+
+==============================================================================
+PICKERS						*termforge-pickers*
+
+termforge checks, in order: Telescope, snacks.picker, then
+|vim.ui.select()|. Install one of the first two for fuzzy matching;
+|vim.ui.select()| is the dependency-free fallback and respects
+`vim.ui.select` overrides such as dressing.nvim.
+
+The terminal buffer picker (|termforge-buffers-select()|) shows a
+preview of each terminal's last lines when the backend supports
+previews; Telescope and snacks.picker do, |vim.ui.select()| does
+not.
+
+Both pickers carry extra keys where the backend supports them
+(Telescope and snacks.picker): `<C-e>` in the command picker opens
+the commands file for editing; in the terminal picker `<C-k>` kills
+the terminal under the cursor and `<C-e>` renames it (label).
+
+==============================================================================
+TESTING						*termforge-testing*
+
+The test suite runs headlessly: >
+
+	nvim --headless -l tests/test.lua
+
+It exits with a non-zero status when a test fails. The flake packages the
+plugin and provides apps to test it: >
+
+	nix run .#test    " run the headless test suite
+	nix run .#        " isolated neovim with only termforge loaded
+	nix run .#telescope " isolated neovim, pickers run through Telescope
+	nix run .#snacks    " isolated neovim, pickers run through snacks
+
+Terminals in the isolated Neovim preload the shell integration, so
+command notifications work there without touching your rc files.
+
+Health checks verify the setup (picker backend, shell integration,
+session settings, command files): >
+
+	:checkhealth termforge
+
+Note that flakes only see files tracked by git, so new files must be
+`git add`-ed before building from the flake.
+
+ vim:tw=78:ts=8:noet:ft=help:norl:
